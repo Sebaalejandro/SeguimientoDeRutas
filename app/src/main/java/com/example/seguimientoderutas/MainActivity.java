@@ -1,6 +1,9 @@
 package com.example.seguimientoderutas;
 
 import android.Manifest;
+import android.util.Log;
+import com.google.android.gms.maps.model.MarkerOptions;
+
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Location;
@@ -25,18 +28,18 @@ import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
-import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.PolylineOptions;
 import com.google.android.material.navigation.NavigationView;
 import com.google.firebase.auth.FirebaseAuth;
-import com.google.firebase.database.DatabaseReference;
-import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.firestore.FirebaseFirestore;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.HashMap;
 
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
 
@@ -48,7 +51,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
-    private DatabaseReference databaseReference;
 
     private List<LatLng> routePoints = new ArrayList<>();
     private boolean isRecording = false;
@@ -103,7 +105,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     }
 
     private void initializeFirebase() {
-        databaseReference = FirebaseDatabase.getInstance().getReference("routes");
+        // No es necesario inicializar la base de datos aquí, Firebase ya se inicializa automáticamente
     }
 
     private void initializeMap() {
@@ -182,20 +184,47 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     }
 
     private void savePointToFirebase(LatLng point) {
-        databaseReference.child(routeId).child("points").push().setValue(point);
+        // Crea un mapa para almacenar los valores de latitud y longitud
+        Map<String, Object> pointData = new HashMap<>();
+        pointData.put("latitude", point.latitude);
+        pointData.put("longitude", point.longitude);
+
+        // Guardar el punto en Firebase bajo la ruta con el ID generado
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        db.collection("routes")
+                .document(routeId) // Usa el ID de la ruta para almacenar los puntos de la ruta
+                .collection("points")
+                .add(pointData)
+                .addOnSuccessListener(documentReference -> {
+                    // Toast para confirmar la adición
+                    Log.d("Firebase", "Punto guardado exitosamente");
+                })
+                .addOnFailureListener(e -> {
+                    // Manejo de error
+                    Log.d("Firebase", "Error al guardar punto: " + e.getMessage());
+                });
     }
 
     private void saveRouteDetailsToFirebase() {
-        databaseReference.child(routeId).child("details").setValue(
-                new RouteData(
-                        routeId,
-                        "Ruta grabada",
-                        routePoints,
-                        totalDistance,
-                        startTime,
-                        System.currentTimeMillis()
-                )
-        );
+        // Crear un mapa con los detalles de la ruta
+        Map<String, Object> routeDetails = new HashMap<>();
+        routeDetails.put("routeId", routeId);
+        routeDetails.put("routeName", "Ruta grabada");
+        routeDetails.put("totalDistance", totalDistance);
+        routeDetails.put("startTime", startTime);
+        routeDetails.put("endTime", System.currentTimeMillis());
+
+        // Guardar los detalles de la ruta en Firebase
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        db.collection("routes")
+                .document(routeId)  // Usa el ID de la ruta para guardar los detalles
+                .set(routeDetails)
+                .addOnSuccessListener(aVoid -> {
+                    Toast.makeText(MainActivity.this, "Ruta guardada correctamente", Toast.LENGTH_SHORT).show();
+                })
+                .addOnFailureListener(e -> {
+                    Toast.makeText(MainActivity.this, "Error al guardar la ruta", Toast.LENGTH_SHORT).show();
+                });
     }
 
     private void addRoutePoint(LatLng point) {
