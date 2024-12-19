@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#f5f5f5">
+
+    <!-- Título o encabezado -->
+    <TextView
+        android:id="@+id/titleHistory"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:gravity="center"
+        android:text="Historial de Rutas"
+        android:textColor="#000"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <!-- RecyclerView para mostrar la lista de rutas -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerViewHistory"
+        android:layout_width="364dp"
+        android:layout_height="553dp"
+        android:background="#ffffff"
+        android:clipToPadding="false"
+        android:padding="8dp"
+        android:scrollbars="vertical" />
+
+</LinearLayout>
