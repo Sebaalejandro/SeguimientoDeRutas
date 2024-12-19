@@ -1,19 +1,25 @@
 package com.example.seguimientoderutas;
 
 import android.Manifest;
-import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Location;
-import android.location.LocationListener;
-import android.location.LocationManager;
 import android.os.Bundle;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.view.GravityCompat;
+import androidx.drawerlayout.widget.DrawerLayout;
 
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
@@ -21,22 +27,34 @@ import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.PolylineOptions;
-import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.android.material.navigation.NavigationView;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
 
     private GoogleMap mMap;
+    private DrawerLayout drawerLayout;
+    private NavigationView navigationView;
     private Button startButton, stopButton;
-    private LocationManager locationManager;
-    private LocationListener locationListener;
+    private ImageView btnMapType;
+
+    private FusedLocationProviderClient fusedLocationClient;
+    private LocationCallback locationCallback;
+    private DatabaseReference databaseReference;
+
     private List<LatLng> routePoints = new ArrayList<>();
     private boolean isRecording = false;
-    private float totalDistance = 0;
+    private String routeId;
+    private float totalDistance = 0; // Distancia total
     private long startTime;
-    private boolean isFirstPoint = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -44,22 +62,71 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         setContentView(R.layout.activity_main);
 
         initializeUI();
-        configureMap();
+        initializeFirebase();
+        initializeMap();
+        initializeLocationServices();
     }
 
     private void initializeUI() {
+        drawerLayout = findViewById(R.id.drawer_layout);
+        navigationView = findViewById(R.id.nav_view);
         startButton = findViewById(R.id.startButton);
         stopButton = findViewById(R.id.stopButton);
+        btnMapType = findViewById(R.id.btnMapType);
 
         startButton.setOnClickListener(v -> startRecording());
         stopButton.setOnClickListener(v -> stopRecording());
+
+        btnMapType.setOnClickListener(v -> {
+            if (mMap != null) {
+                int currentMapType = mMap.getMapType();
+                if (currentMapType == GoogleMap.MAP_TYPE_NORMAL) {
+                    mMap.setMapType(GoogleMap.MAP_TYPE_SATELLITE);
+                } else {
+                    mMap.setMapType(GoogleMap.MAP_TYPE_NORMAL);
+                }
+            }
+        });
+
+        navigationView.setNavigationItemSelectedListener(item -> {
+            int id = item.getItemId();
+            if (id == R.id.nav_view_routes) {
+                viewRoutes();
+            } else if (id == R.id.nav_edit_profile) {
+                editProfile();
+            } else if (id == R.id.nav_logout) {
+                logout();
+            }
+            drawerLayout.closeDrawer(GravityCompat.START);
+            return true;
+        });
     }
 
-    private void configureMap() {
+    private void initializeFirebase() {
+        databaseReference = FirebaseDatabase.getInstance().getReference("routes");
+    }
+
+    private void initializeMap() {
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager().findFragmentById(R.id.map);
         if (mapFragment != null) {
             mapFragment.getMapAsync(this);
         }
+    }
+
+    private void initializeLocationServices() {
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        locationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(@NonNull LocationResult locationResult) {
+                if (isRecording) {
+                    for (Location location : locationResult.getLocations()) {
+                        LatLng point = new LatLng(location.getLatitude(), location.getLongitude());
+                        addRoutePoint(point);
+                        savePointToFirebase(point);
+                    }
+                }
+            }
+        };
     }
 
     @Override
@@ -71,6 +138,13 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         } else {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1);
         }
+
+        fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
+            if (location != null) {
+                LatLng currentLatLng = new LatLng(location.getLatitude(), location.getLongitude());
+                mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(currentLatLng, 15));
+            }
+        });
     }
 
     private void startRecording() {
@@ -78,45 +152,55 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             isRecording = true;
             routePoints.clear();
             totalDistance = 0;
+            routeId = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
             startTime = System.currentTimeMillis();
-            isFirstPoint = true;
             Toast.makeText(this, "Grabación iniciada", Toast.LENGTH_SHORT).show();
 
-            locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
-            locationListener = new LocationListener() {
-                @Override
-                public void onLocationChanged(@NonNull Location location) {
-                    if (isRecording) {
-                        addRoutePoint(new LatLng(location.getLatitude(), location.getLongitude()));
-                    }
-                }
-
-                @Override
-                public void onStatusChanged(String provider, int status, Bundle extras) {
-                    // No se utiliza
-                }
-
-                @Override
-                public void onProviderEnabled(@NonNull String provider) {
-                    // No se utiliza
-                }
-
-                @Override
-                public void onProviderDisabled(@NonNull String provider) {
-                    // No se utiliza
-                }
-            };
+            LocationRequest locationRequest = LocationRequest.create()
+                    .setInterval(3000)
+                    .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
 
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 10000, 0, locationListener);
+                fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null);
             }
         }
+    }
+
+    private void stopRecording() {
+        if (isRecording) {
+            isRecording = false;
+            fusedLocationClient.removeLocationUpdates(locationCallback);
+
+            if (!routePoints.isEmpty()) {
+                saveRouteDetailsToFirebase();
+                showRouteSummary();
+                Toast.makeText(this, "Ruta guardada correctamente", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "No se registraron puntos en la ruta", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private void savePointToFirebase(LatLng point) {
+        databaseReference.child(routeId).child("points").push().setValue(point);
+    }
+
+    private void saveRouteDetailsToFirebase() {
+        databaseReference.child(routeId).child("details").setValue(
+                new RouteData(
+                        routeId,
+                        "Ruta grabada",
+                        routePoints,
+                        totalDistance,
+                        startTime,
+                        System.currentTimeMillis()
+                )
+        );
     }
 
     private void addRoutePoint(LatLng point) {
         routePoints.add(point);
 
-        // Verifica si hay más de un punto para calcular la distancia
         if (routePoints.size() > 1) {
             LatLng lastPoint = routePoints.get(routePoints.size() - 2);
             Location prevLocation = new Location("");
@@ -128,25 +212,12 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             totalDistance += prevLocation.distanceTo(currentLocation);
         }
 
-        // Crear la polilínea con un color y grosor más visible
         mMap.addPolyline(new PolylineOptions()
                 .addAll(routePoints)
-                .color(0xFFFF0000)  // Rojo brillante
-                .width(25));        // Grosor de 12px
+                .color(0xFFFF0000)
+                .width(25));
 
-        // Mover la cámara para enfocar la ruta con animación
         mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(routePoints.get(routePoints.size() - 1), 16));
-    }
-
-    private void stopRecording() {
-        if (isRecording) {
-            isRecording = false;
-            locationManager.removeUpdates(locationListener);
-            long endTime = System.currentTimeMillis();
-            RouteData routeData = new RouteData("Ruta_" + endTime, "default", routePoints, totalDistance, startTime, endTime);
-            saveRouteToFirestore(routeData);
-            showRouteSummary();
-        }
     }
 
     private void showRouteSummary() {
@@ -160,15 +231,40 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         }
     }
 
-    private void saveRouteToFirestore(RouteData routeData) {
-        FirebaseFirestore db = FirebaseFirestore.getInstance();
-        db.collection("routes")
-                .add(routeData)
-                .addOnSuccessListener(documentReference -> {
-                    Toast.makeText(MainActivity.this, "Ruta guardada exitosamente", Toast.LENGTH_SHORT).show();
-                })
-                .addOnFailureListener(e -> {
-                    Toast.makeText(MainActivity.this, "Error al guardar la ruta", Toast.LENGTH_SHORT).show();
-                });
+    private void viewRoutes() {
+        Intent intent = new Intent(MainActivity.this, HistoryActivity.class);
+        startActivity(intent);
+    }
+
+    private void editProfile() {
+        Intent intent = new Intent(MainActivity.this, EditProfileActivity.class);
+        startActivity(intent);
+    }
+
+    private void logout() {
+        FirebaseAuth.getInstance().signOut();
+        Toast.makeText(this, "Sesión cerrada", Toast.LENGTH_SHORT).show();
+        Intent intent = new Intent(MainActivity.this, LoginActivity.class);
+        startActivity(intent);
+        finish();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 1 && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            onMapReady(mMap);
+        } else {
+            Toast.makeText(this, "Permiso de ubicación denegado", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+            drawerLayout.closeDrawer(GravityCompat.START);
+        } else {
+            super.onBackPressed();
+        }
     }
 }
